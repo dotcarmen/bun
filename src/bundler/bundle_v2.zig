@@ -1554,6 +1554,7 @@ pub const BundleV2 = struct {
 
     pub const BuildResult = struct {
         output_files: std.ArrayList(options.OutputFile),
+        executable: bool = false,
     };
 
     pub const Result = union(enum) {
@@ -2016,7 +2017,7 @@ pub const BundleV2 = struct {
     pub fn runFromJSInNewThread(
         this: *BundleV2,
         entry_points: []const []const u8,
-    ) !std.ArrayList(options.OutputFile) {
+    ) !BuildResult {
         this.unique_key = generateUniqueKey();
 
         if (this.bundler.log.errors > 0) {
@@ -2061,7 +2062,27 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
-        return try this.linker.generateChunksInParallel(chunks, false);
+        const output_files = try this.linker.generateChunksInParallel(chunks, false);
+        if (!this.bundler.options.compile) {
+            return .{ .output_files = output_files };
+        }
+
+        // TODO: support cross-compilation
+        const compile_target = bun.StandaloneModuleGraph.CompileTarget{};
+        const outfile = if (compile_target.os == .windows) "index.exe" else "index";
+
+        try bun.StandaloneModuleGraph.toExecutable(
+            &compile_target,
+            this.graph.allocator,
+            output_files.items,
+            this.bundler.options.output_dir_handle orelse unreachable,
+            this.bundler.options.public_path,
+            outfile,
+            this.bundler.env,
+            this.bundler.options.output_format,
+        );
+
+        return .{ .executable = true, .output_files = output_files };
     }
 
     /// Dev Server uses this instead to run a subset of the bundler, where
@@ -3114,9 +3135,9 @@ pub fn BundleThread(CompletionStruct: type) type {
                 completion.log = out_log;
             }
 
-            completion.result = .{ .value = .{
-                .output_files = try this.runFromJSInNewThread(bundler.options.entry_points),
-            } };
+            completion.result = .{
+                .value = try this.runFromJSInNewThread(bundler.options.entry_points),
+            };
 
             var out_log = Logger.Log.init(bun.default_allocator);
             this.bundler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
@@ -5028,6 +5049,8 @@ pub const LinkerContext = struct {
         mode: Mode = .bundle,
 
         public_path: []const u8 = "",
+
+        compile: bool = false,
 
         pub const Mode = enum {
             passthrough,

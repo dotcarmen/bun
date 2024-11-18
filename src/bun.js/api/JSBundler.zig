@@ -78,6 +78,7 @@ pub const JSBundler = struct {
         experimental_css: bool = false,
         css_chunking: bool = false,
         drop: bun.StringSet = bun.StringSet.init(bun.default_allocator),
+        compile: bool = false,
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -483,6 +484,10 @@ pub const JSBundler = struct {
                     .extensions = loader_names,
                     .loaders = loader_values,
                 };
+            }
+
+            if (try config.getBooleanLoose(globalThis, "compile")) |compile| {
+                this.compile = compile;
             }
 
             return this;
